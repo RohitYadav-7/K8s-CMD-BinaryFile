@@ -1,21 +1,22 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 
-	appsv1 "k8s.io/api/apps/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-
 	"gopkg.in/yaml.v2"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -34,6 +35,12 @@ func main() {
 	ingressNamePtr := flag.String("ingressname", "", "Name of the Ingress resource")
 	editIngressPtr := flag.Bool("editingress", false, "Edit Ingress resource")
 	editDeploymentPtr := flag.String("editdeployment", "", "Edit deployment (namespace/deployment)")
+	describeDeploymentPtr := flag.String("describedeployment", "", "Describe a deployment (format: namespace/deployment)")
+	viewLogsPtr := flag.Bool("viewlogs", false, "View pod logs")
+
+	// Additional flags for viewing logs
+	podName := flag.String("pod", "", "Pod name for viewing logs")
+	containerName := flag.String("container", "", "Container name (optional)")
 
 	// Parse flags
 	flag.Parse()
@@ -77,28 +84,40 @@ func main() {
 			os.Exit(1)
 		}
 		editDeployment(clientset, parts[0], parts[1])
+	} else if *describeDeploymentPtr != "" {
+		parts := strings.Split(*describeDeploymentPtr, "/")
+		if len(parts) == 2 {
+			describeDeployment(clientset, parts[0], parts[1])
+		} else {
+			fmt.Println("Invalid format for describedeployment flag. Use namespace/deployment")
+		}
+	} else if *viewLogsPtr {
+		if *podName == "" {
+			fmt.Println("Error: --pod flag is required for viewing logs")
+			os.Exit(1)
+		}
+		viewPodLogs(clientset, *namespacePtr, *podName, *containerName)
 	} else {
 		flag.Usage()
 	}
 }
 
 func cleanup(clientset *kubernetes.Clientset) {
-	// Get the list of all pods in all namespaces
+	// List all pods in all namespaces
 	pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		log.Fatalf("Error listing pods: %v", err)
+		fmt.Println("Error listing pods:", err)
+		os.Exit(1)
 	}
 
-	// Iterate over the list of pods and delete those in ImagePullBackOff state
 	for _, pod := range pods.Items {
-		for _, containerStatus := range pod.Status.ContainerStatuses {
-			if containerStatus.State.Waiting != nil && containerStatus.State.Waiting.Reason == "ImagePullBackOff" {
-				fmt.Printf("Deleting pod %s in namespace %s\n", pod.Name, pod.Namespace)
-				err := clientset.CoreV1().Pods(pod.Namespace).Delete(context.TODO(), pod.Name, metav1.DeleteOptions{})
-				if err != nil {
-					log.Printf("Error deleting pod %s in namespace %s: %v", pod.Name, pod.Namespace, err)
-				}
-				break
+		if pod.Status.Phase != "Running" {
+			// Delete the pod
+			err := clientset.CoreV1().Pods(pod.Namespace).Delete(context.TODO(), pod.Name, metav1.DeleteOptions{})
+			if err != nil {
+				fmt.Printf("Error deleting pod %s: %v\n", pod.Name, err)
+			} else {
+				fmt.Printf("Deleted pod %s in namespace %s\n", pod.Name, pod.Namespace)
 			}
 		}
 	}
@@ -345,4 +364,63 @@ func editDeployment(clientset *kubernetes.Clientset, namespace, deploymentName s
 	}
 
 	fmt.Println("Deployment updated successfully.")
+}
+
+func describeDeployment(clientset *kubernetes.Clientset, namespace string, deploymentName string) {
+	deployment, err := clientset.AppsV1().Deployments(namespace).Get(context.TODO(), deploymentName, metav1.GetOptions{})
+	if err != nil {
+		fmt.Println("Error retrieving deployment:", err)
+		return
+	}
+
+	fmt.Printf("Name: %s\n", deployment.Name)
+	fmt.Printf("Namespace: %s\n", deployment.Namespace)
+	fmt.Printf("Labels: %v\n", deployment.Labels)
+	fmt.Printf("Annotations: %v\n", deployment.Annotations)
+	fmt.Printf("Replicas: %d\n", *deployment.Spec.Replicas)
+	fmt.Printf("Selector: %v\n", deployment.Spec.Selector.MatchLabels)
+	fmt.Printf("Strategy: %s\n", deployment.Spec.Strategy.Type)
+	fmt.Printf("Min Ready Seconds: %d\n", deployment.Spec.MinReadySeconds)
+	fmt.Printf("Containers:\n")
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		fmt.Printf("  Name: %s\n", container.Name)
+		fmt.Printf("  Image: %s\n", container.Image)
+		fmt.Printf("  Ports: %v\n", container.Ports)
+		fmt.Printf("  Env: %v\n", container.Env)
+		fmt.Printf("  Resources: %v\n", container.Resources)
+	}
+	fmt.Printf("Conditions:\n")
+	for _, condition := range deployment.Status.Conditions {
+		fmt.Printf("  Type: %s\n", condition.Type)
+		fmt.Printf("  Status: %s\n", condition.Status)
+		fmt.Printf("  Reason: %s\n", condition.Reason)
+		fmt.Printf("  Message: %s\n", condition.Message)
+		fmt.Printf("  Last Update Time: %s\n", condition.LastUpdateTime)
+		fmt.Printf("  Last Transition Time: %s\n", condition.LastTransitionTime)
+	}
+	fmt.Printf("Available Replicas: %d\n", deployment.Status.AvailableReplicas)
+	fmt.Printf("Unavailable Replicas: %d\n", deployment.Status.UnavailableReplicas)
+}
+
+func viewPodLogs(clientset *kubernetes.Clientset, namespace, podName, containerName string) {
+	podLogOpts := corev1.PodLogOptions{}
+	if containerName != "" {
+		podLogOpts.Container = containerName
+	}
+
+	req := clientset.CoreV1().Pods(namespace).GetLogs(podName, &podLogOpts)
+	podLogs, err := req.Stream(context.TODO())
+	if err != nil {
+		fmt.Println("Error opening log stream:", err)
+		return
+	}
+	defer podLogs.Close()
+
+	buf := new(bytes.Buffer)
+	_, err = io.Copy(buf, podLogs)
+	if err != nil {
+		fmt.Println("Error copying log stream:", err)
+		return
+	}
+	fmt.Println(buf.String())
 }

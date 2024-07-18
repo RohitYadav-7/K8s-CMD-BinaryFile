@@ -40,12 +40,12 @@ git clone https://github.com/RohitYadav-7/K8s-CMD-BinaryFile.git
 // TODO(user): Deacribe a specific pod in your Kubernetes cluster.
 
 ```sh
-./k8sCMDbinary --describepod mypod1 --namespace default
+./k8sCMDbinary --describepod podname --namespace default
 ```
 ### 3. Cleanup 
 
 **Description**
-// TODO(user): delete ImagePullBackOff pods in your Kubernetes cluster.
+// TODO(user): all pods get deleted except the running pods in your Kubernetes cluster.
 
 ```sh
 ./k8sCMDbinary --cleanup
@@ -66,19 +66,32 @@ git clone https://github.com/RohitYadav-7/K8s-CMD-BinaryFile.git
 **Description**
 // TODO(user): Editreplicas in your Kubernetes cluster.
 ```sh
-./k8sCMDbinary --editreplicas=default:deployment1:3
+./k8sCMDbinary --editreplicas=default:deploymentname:<replicanumbers>
 ```
 ### 7. Editingress
 **Description**
 // TODO(user): Editingress file in your Kubernetes cluster.
 ```sh
-./k8sCMDbinary --editingress --namespace default --ingressname example-ingress
+./k8sCMDbinary --editingress --namespace default --ingressname ingressName
 ```
 ### 8. Editdeployment
 **Description**
 // TODO(user): Editdeployment in your Kubernetes cluster.
 ```sh
-./k8sCMDbinary --editdeployment=default/deployment3
+./k8sCMDbinary --editdeployment=namespacename/deploymentname 
+```
+### 9. Describedeployment
+**Description**
+// TODO(user): describedeployment in your Kubernetes cluster.
+```sh
+./k8sCMDbinary  --describedeployment=namespacename/deploymentname    
+```
+
+### 10. Viewing Pod Logs
+**Description**
+// TODO(user): Viewing Pod Logs in your Kubernetes cluster.
+```sh
+./k8sCMDbinary  --viewlogs --pod podname --namespace namespacename --container containername
 ```
 
 
